@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
-import android.util.DisplayMetrics
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -13,10 +12,7 @@ class MainActivity : Activity() {
 
     private var runner: AgentRunner? = null
 
-    private var screenCaptureEngine: ScreenCaptureEngine? = null
-
     private lateinit var status: TextView
-
     private lateinit var goalInput: EditText
     private lateinit var apiKeyInput: EditText
 
@@ -29,32 +25,20 @@ class MainActivity : Activity() {
 
         setContentView(R.layout.activity_main)
 
-        goalInput =
-            findViewById(R.id.goalInput)
-
-        apiKeyInput =
-            findViewById(R.id.apiKeyInput)
-
-        status =
-            findViewById(R.id.status)
+        goalInput = findViewById(R.id.goalInput)
+        apiKeyInput = findViewById(R.id.apiKeyInput)
+        status = findViewById(R.id.status)
 
         val accessibilityButton =
-            findViewById<Button>(
-                R.id.accessibilityButton
-            )
+            findViewById<Button>(R.id.accessibilityButton)
 
         val startButton =
-            findViewById<Button>(
-                R.id.startButton
-            )
+            findViewById<Button>(R.id.startButton)
 
         val stopButton =
-            findViewById<Button>(
-                R.id.stopButton
-            )
+            findViewById<Button>(R.id.stopButton)
 
         accessibilityButton.setOnClickListener {
-
             startActivity(
                 Intent(
                     Settings.ACTION_ACCESSIBILITY_SETTINGS
@@ -63,76 +47,48 @@ class MainActivity : Activity() {
         }
 
         startButton.setOnClickListener {
-
             startAgent()
         }
 
         stopButton.setOnClickListener {
-
             runner?.stop()
+            runner = null
 
-            screenCaptureEngine?.stop()
-            screenCaptureEngine = null
+            stopScreenCaptureService()
 
-            status.text =
-                "Статус: остановлено"
+            status.text = "Статус: остановлено"
         }
     }
 
     private fun startAgent() {
 
         val goal =
-            goalInput.text
-                .toString()
-                .trim()
+            goalInput.text.toString().trim()
 
         val apiKey =
-            apiKeyInput.text
-                .toString()
-                .trim()
+            apiKeyInput.text.toString().trim()
 
         if (goal.isEmpty()) {
-
-            status.text =
-                "Введите задачу"
-
+            status.text = "Введите задачу"
             return
         }
 
         if (apiKey.isEmpty()) {
-
-            status.text =
-                "Введите DeepSeek API key"
-
+            status.text = "Введите DeepSeek API key"
             return
         }
 
-        if (
-            AgentAccessibilityService.instance == null
-        ) {
-
-            status.text =
-                "Сначала включите управление телефоном"
-
+        if (screenCaptureEngineIsRunning()) {
+            startRunner(goal, apiKey)
             return
         }
 
-        if (screenCaptureEngine == null) {
+        status.text =
+            "Запрашиваем доступ к экрану..."
 
-            status.text =
-                "Запрашиваем доступ к экрану..."
-
-            startActivityForResult(
-                screenCaptureManager.createRequestIntent(),
-                ScreenCaptureManager.REQUEST_CODE
-            )
-
-            return
-        }
-
-        startRunner(
-            goal,
-            apiKey
+        startActivityForResult(
+            screenCaptureManager.createRequestIntent(),
+            ScreenCaptureManager.REQUEST_CODE
         )
     }
 
@@ -140,6 +96,14 @@ class MainActivity : Activity() {
         goal: String,
         apiKey: String
     ) {
+
+        if (
+            AgentAccessibilityService.instance == null
+        ) {
+            status.text =
+                "Сначала включите управление телефоном"
+            return
+        }
 
         runner?.stop()
 
@@ -150,7 +114,6 @@ class MainActivity : Activity() {
             ) { message ->
 
                 runOnUiThread {
-
                     status.text =
                         "Статус: $message"
                 }
@@ -162,12 +125,61 @@ class MainActivity : Activity() {
         runner?.start()
     }
 
+    private fun screenCaptureEngineIsRunning(): Boolean {
+        return ScreenCaptureService.projection != null
+    }
+
+    private fun startScreenCaptureService(
+        resultCode: Int,
+        data: Intent
+    ) {
+
+        val serviceIntent =
+            Intent(
+                this,
+                ScreenCaptureService::class.java
+            ).apply {
+
+                action =
+                    ScreenCaptureService.ACTION_START
+
+                putExtra(
+                    ScreenCaptureService.EXTRA_RESULT_CODE,
+                    resultCode
+                )
+
+                putExtra(
+                    ScreenCaptureService.EXTRA_DATA,
+                    data
+                )
+            }
+
+        startForegroundService(
+            serviceIntent
+        )
+    }
+
+    private fun stopScreenCaptureService() {
+
+        val intent =
+            Intent(
+                this,
+                ScreenCaptureService::class.java
+            ).apply {
+                action =
+                    ScreenCaptureService.ACTION_STOP
+            }
+
+        startService(intent)
+    }
+
     @Deprecated("Deprecated in Android API")
     override fun onActivityResult(
         requestCode: Int,
         resultCode: Int,
         data: Intent?
     ) {
+
         super.onActivityResult(
             requestCode,
             resultCode,
@@ -194,48 +206,13 @@ class MainActivity : Activity() {
 
         try {
 
-            val projection =
-                screenCaptureManager.createProjection(
-                    resultCode,
-                    data
-                )
-
-            if (projection == null) {
-
-                status.text =
-                    "Не удалось получить доступ к экрану"
-
-                return
-            }
-
-            val metrics =
-                DisplayMetrics()
-
-            @Suppress("DEPRECATION")
-            windowManager.defaultDisplay
-                .getMetrics(metrics)
-
-            val width =
-                metrics.widthPixels
-
-            val height =
-                metrics.heightPixels
-
-            val density =
-                metrics.densityDpi
-
-            screenCaptureEngine =
-                ScreenCaptureEngine(
-                    projection = projection,
-                    width = width,
-                    height = height,
-                    density = density
-                )
-
-            screenCaptureEngine?.start()
+            startScreenCaptureService(
+                resultCode,
+                data
+            )
 
             status.text =
-                "Экран доступен AI"
+                "Запускаем захват экрана..."
 
             val goal =
                 goalInput.text
@@ -247,16 +224,33 @@ class MainActivity : Activity() {
                     .toString()
                     .trim()
 
-            if (
-                goal.isNotEmpty() &&
-                apiKey.isNotEmpty()
-            ) {
+            window.decorView.postDelayed({
 
-                startRunner(
-                    goal,
-                    apiKey
-                )
-            }
+                if (
+                    ScreenCaptureService.projection != null
+                ) {
+
+                    status.text =
+                        "Экран доступен AI"
+
+                    if (
+                        goal.isNotEmpty() &&
+                        apiKey.isNotEmpty()
+                    ) {
+
+                        startRunner(
+                            goal,
+                            apiKey
+                        )
+                    }
+
+                } else {
+
+                    status.text =
+                        "Не удалось запустить захват экрана"
+                }
+
+            }, 1000)
 
         } catch (e: Exception) {
 
@@ -268,9 +262,9 @@ class MainActivity : Activity() {
     override fun onDestroy() {
 
         runner?.stop()
+        runner = null
 
-        screenCaptureEngine?.stop()
-        screenCaptureEngine = null
+        stopScreenCaptureService()
 
         super.onDestroy()
     }
